@@ -1,0 +1,69 @@
+#!/bin/bash
+
+# Ultra dummy script to control CyberPower PDUs
+# Tested with PDU20SWHVIEC8FNET (firmware 2.1.6)
+# Copyright (c) 2016 Jiri Pirko <jiri@resnulli.us>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+
+# Here are couple of examples of manual snmpwalk and snmpset commands:
+# $ snmpwalk -v 1 -c private $host enterprises
+# to list names:
+# $ snmpwalk -v 1 -c private $host SNMPv2-SMI::enterprises.3808.1.1.3.3.3.1.1.2
+# to list on/off states:
+# $ snmpwalk -v 1 -c private $host SNMPv2-SMI::enterprises.3808.1.1.3.3.3.1.1.4
+# to turn outlet "1" off:
+# $ snmpset -v 1 -c private $host SNMPv2-SMI::enterprises.3808.1.1.3.3.3.1.1.4.1 i 2
+# to turn outlet "1" on:
+# $ snmpset -v 1 -c private $host SNMPv2-SMI::enterprises.3808.1.1.3.3.3.1.1.4.1 i 1
+
+if [ $# -eq 0 ]; then
+	echo "Usage: cyberpdu HOSTNAME"
+	echo "       cyberpdu HOSTNAME OUTLETNAME"
+	echo "       cyberpdu HOSTNAME OUTLETNAME {on | off}"
+	exit
+fi
+
+PDUHOST=$1
+PDUNAMESPATH="SNMPv2-SMI::enterprises.3808.1.1.3.3.3.1.1.2"
+PDUONOFFPATH="SNMPv2-SMI::enterprises.3808.1.1.3.3.3.1.1.4"
+
+nameslines=($(snmpwalk -v 1 -c private $PDUHOST ${PDUNAMESPATH} |sed -e 's/.*\.[0-9]\+\.\([0-9]\+\).*"\(.*\)"/\1:\2/'))
+
+declare -A map
+
+for line in "${nameslines[@]}"
+do
+	num=`echo $line | cut -d ":" -f 1`
+	name=`echo $line | cut -d ":" -f 2`
+	if [ $# -gt 1 ] && [ "$2" != "$name" ]; then
+		continue
+	fi
+
+	onofflines=($(snmpwalk -v 1 -c private $PDUHOST ${PDUONOFFPATH}.$num |sed -e 's/.*\.[0-9]\+\.\([0-9]\+\).*INTEGER: \(.*\)/\1:\2/'))
+	onoff=`echo ${onofflines[0]} | cut -d ":" -f 2`
+
+	echo -n "$name is "
+	if [ "$onoff" -eq "1" ]; then
+		echo "on"
+	else
+		echo "off"
+	fi
+	if [ $# -le 2 ]; then
+		continue;
+	fi
+	if [ "$3" = "on" ]; then
+		onoffval=1
+	elif [ "$3" = "off" ]; then
+		onoffval=2
+	else
+		echo "Desired power state must be \"on\" or \"off\""
+		exit
+	fi
+	echo "turning $3"
+	snmpset -v 1 -c private $PDUHOST ${PDUONOFFPATH}.$num i $onoffval > /dev/null
+done
+
